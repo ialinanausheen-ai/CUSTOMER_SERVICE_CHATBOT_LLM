@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 from datetime import datetime
 
 from langchain_helper import get_qa_chain, create_vector_db
@@ -15,6 +16,14 @@ from support_ticket_engine import (
     create_masked_handoff,
     handle_sla_escalation
 )
+from knowledge_base_pipeline import (
+    detect_prompt_injection,
+    mask_sensitive_data,
+    record_monitoring_metrics,
+    run_health_check,
+    automatic_rollback
+)
+
 
 
 st.title("CUSTOMER SERVICE CHATBOT 🤖")
@@ -46,6 +55,16 @@ with st.form("chat_form"):
     send_message = st.form_submit_button("Send")
 
 if send_message and question:
+        # Task 3: Prompt-injection protection
+    injection_check = detect_prompt_injection(question)
+
+    if not injection_check["safe"]:
+        st.error(
+            "⚠️ Potential prompt injection detected. "
+            "This request was blocked for security."
+        )
+        st.write(f"Detected patterns: {injection_check['patterns']}")
+        st.stop()
     
 
     # 1. Analyze sentiment
@@ -135,8 +154,8 @@ if send_message and question:
         )
 
                     # 8. Create structured support ticket
-    ticket = extract_ticket_information(question)
-
+    masked_ticket_question = mask_sensitive_data(question)
+    ticket = extract_ticket_information(masked_ticket_question)
     missing_information = find_missing_information(ticket)
 
     priority = calculate_priority(
@@ -252,16 +271,45 @@ if send_message and question:
         st.warning(
             f"SLA Warning: {sla_escalation['reason']}"
         )
+            # Task 3: Mask sensitive data before LLM processing
+    masked_question = mask_sensitive_data(question)
 
     # 8. Generate chatbot response
     st.header("Answer")
+    response_start_time = time.time()
+    response_failure_count = 0
 
     try:
         chain = get_qa_chain()
-        response = chain(question)
+        response = chain.invoke({"query": masked_question})
+        response_latency_ms = round(
+            (time.time() - response_start_time) * 1000,
+            2
+        )
+
+        monitoring_metrics = record_monitoring_metrics(
+            latency_ms=response_latency_ms,
+            failure_count=response_failure_count,
+            confidence_score=sentiment["confidence"],
+            escalation_count=1 if escalation["escalation_required"] else 0
+        )
+
+        st.subheader("Task 3 Monitoring")
+        st.write(f"Response Latency: {monitoring_metrics['latency_ms']} ms")
+        st.write(f"Failures: {monitoring_metrics['failure_count']}")
+        st.write(
+            f"Confidence: {monitoring_metrics['confidence_score']}"
+        )
+        st.write(
+            f"Escalations: {monitoring_metrics['escalation_count']}"
+        )
+
+       
         st.write(response["result"])
+        
 
     except Exception as e:
+        response_failure_count = 1
         error_message = str(e)
 
         if "429" in error_message or "RESOURCE_EXHAUSTED" in error_message:
