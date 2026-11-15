@@ -28,7 +28,7 @@ from knowledge_base_pipeline import (
     run_health_check,
     automatic_rollback
 )
-
+from multimodal_evidence_engine import process_uploaded_file
 
 
 st.title("CUSTOMER SERVICE CHATBOT 🤖")
@@ -67,6 +67,86 @@ if historical_question:
         "Policy date",
         value=datetime.now().date()
     ).isoformat()
+    # Task 5: Multimodal evidence upload
+st.subheader("Evidence Upload")
+
+uploaded_file = st.file_uploader(
+    "Upload a screenshot, invoice, PDF, or product image",
+    type=["png", "jpg", "jpeg", "webp", "pdf"],
+    max_upload_size=10
+)
+
+evidence_message = st.text_area(
+    "Message related to the uploaded evidence",
+    placeholder="Example: My order ID is ORD12345 and I was charged Rs 2499."
+)
+
+if uploaded_file is not None:
+
+    if st.button("Process Uploaded Evidence"):
+
+        file_bytes = uploaded_file.getvalue()
+
+        evidence_result = process_uploaded_file(
+            uploaded_file.name,
+            file_bytes,
+            evidence_message
+        )
+
+        if evidence_result["status"] == "processed":
+
+            st.success(
+                evidence_result["reason"]
+            )
+
+            st.write(
+                "Evidence:",
+                evidence_result["evidence"]
+            )
+
+            if evidence_result["comparison"]["match"]:
+                st.success(
+                    "Evidence matches the customer's message."
+                )
+            else:
+                st.warning(
+                    "Evidence conflicts with the customer's message."
+                )
+
+        elif evidence_result["status"] == "conflict_detected":
+
+            st.warning(
+                evidence_result["reason"]
+            )
+
+            st.write(
+                "Conflicts:",
+                evidence_result["comparison"]["conflicts"]
+            )
+
+        elif evidence_result["status"] == "clarification_required":
+
+            st.warning(
+                evidence_result["reason"]
+            )
+
+        elif evidence_result["status"] == "queued":
+
+            st.info(
+                "Your evidence is taking longer than 30 seconds "
+                "to process and has been moved to the background queue."
+            )
+
+            st.write(
+                "Job ID:",
+                evidence_result["job"]["job_id"]
+            )
+
+        elif evidence_result["status"] == "rejected":
+
+            st.error(
+                evidence_result["reason"]
+            )
 # Customer question
 with st.form("chat_form"):
     question = st.text_input("Question: ")
