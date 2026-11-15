@@ -1,8 +1,13 @@
 import streamlit as st
 import time
 from datetime import datetime
+from dotenv import load_dotenv
 
-from langchain_helper import get_qa_chain, create_vector_db
+from langchain_helper import (
+    get_qa_chain,
+    create_vector_db,
+    answer_question
+)
 from sentiment_engine import analyze_sentiment
 from conversation_manager import ConversationManager
 from escalation_engine import evaluate_escalation
@@ -43,7 +48,25 @@ if btn:
     create_vector_db()
     st.success("Knowledgebase created successfully.")
 
+st.subheader("Knowledge Access")
 
+customer_access_level = st.selectbox(
+    "Customer access level",
+    ["public", "customer", "agent", "admin"],
+    index=1
+)
+
+historical_question = st.checkbox(
+    "Historical question"
+)
+
+historical_date = None
+
+if historical_question:
+    historical_date = st.date_input(
+        "Policy date",
+        value=datetime.now().date()
+    ).isoformat()
 # Customer question
 with st.form("chat_form"):
     question = st.text_input("Question: ")
@@ -279,9 +302,18 @@ if send_message and question:
     response_start_time = time.time()
     response_failure_count = 0
 
+    st.header("Answer")
+
+    response_start_time = time.time()
+    response_failure_count = 0
+
     try:
-        chain = get_qa_chain()
-        response = chain.invoke({"query": masked_question})
+        response = answer_question(
+            masked_question,
+            customer_access_level=customer_access_level,
+            target_date=historical_date
+        )
+
         response_latency_ms = round(
             (time.time() - response_start_time) * 1000,
             2
@@ -291,37 +323,69 @@ if send_message and question:
             latency_ms=response_latency_ms,
             failure_count=response_failure_count,
             confidence_score=sentiment["confidence"],
-            escalation_count=1 if escalation["escalation_required"] else 0
+            escalation_count=(
+                1 if escalation["escalation_required"]
+                else 0
+            )
         )
 
         st.subheader("Task 3 Monitoring")
-        st.write(f"Response Latency: {monitoring_metrics['latency_ms']} ms")
-        st.write(f"Failures: {monitoring_metrics['failure_count']}")
+
         st.write(
-            f"Confidence: {monitoring_metrics['confidence_score']}"
-        )
-        st.write(
-            f"Escalations: {monitoring_metrics['escalation_count']}"
+            f"Response Latency: "
+            f"{monitoring_metrics['latency_ms']} ms"
         )
 
-       
-        st.write(response["result"])
-        
+        st.write(
+            f"Failures: "
+            f"{monitoring_metrics['failure_count']}"
+        )
+
+        st.write(
+            f"Confidence: "
+            f"{monitoring_metrics['confidence_score']}"
+        )
+
+        st.write(
+            f"Escalations: "
+            f"{monitoring_metrics['escalation_count']}"
+        )
+
+        if response["grounded"]:
+            st.write(response["answer"])
+
+            st.subheader("Sources")
+
+            for citation in response["citations"]:
+                st.write(citation)
+
+        else:
+            st.warning(
+                "⚠️ I don't have enough reliable evidence "
+                "to answer this question. "
+                "Please clarify your question or provide "
+                "additional information."
+            )
 
     except Exception as e:
         response_failure_count = 1
+
         error_message = str(e)
 
-        if "429" in error_message or "RESOURCE_EXHAUSTED" in error_message:
+        if (
+            "429" in error_message
+            or "RESOURCE_EXHAUSTED" in error_message
+        ):
             st.warning(
-                "The chatbot's AI response service is temporarily unavailable "
-                "because the API request quota has been reached. "
-                "The sentiment and escalation analysis is still available."
+                "The chatbot's AI response service is "
+                "temporarily unavailable because the API "
+                "request quota has been reached. "
+                "The sentiment and escalation analysis "
+                "is still available."
             )
         else:
-            st.error(
-                "The chatbot response could not be generated at this time."
-            )
+           st.exception(e)
+       
 
     # 9. Conversation summary
     st.subheader("Conversation Summary")
