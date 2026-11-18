@@ -2,94 +2,137 @@ import re
 from textblob import TextBlob
 
 
-def detect_language(message):
+def detect_language(message, supported_languages=None):
     """
     Detect the language of the current message.
+
+    Supports:
+    - Native-script detection
+    - Transliteration
+    - Mixed-language messages
+    - Common spelling mistakes
+
+    supported_languages can be supplied to make language support configurable.
     """
+
+    from difflib import SequenceMatcher
+
+    # Default supported languages
+    if supported_languages is None:
+        supported_languages = [
+            "English",
+            "Spanish",
+            "French",
+            "German",
+            "Hindi",
+            "Tamil",
+            "Urdu"
+        ]
 
     language_patterns = {
         "Spanish": [
-            "hola",
-            "gracias",
-            "ayuda",
-            "problema",
-            "por favor",
-            "necesito",
-            "pago",
-            "cuenta",
-            "cobro"
+            "hola", "gracias", "ayuda", "problema",
+            "por favor", "necesito", "pago",
+            "cuenta", "cobro"
         ],
 
         "French": [
-            "bonjour",
-            "merci",
-            "aide",
-            "problème",
-            "s'il vous plaît",
-            "paiement",
-            "compte",
-            "heureux",
-            "génial"
+            "bonjour", "merci", "aide", "problème",
+            "probleme", "s'il vous plaît", "paiement",
+            "compte", "heureux", "génial", "genial"
         ],
 
         "German": [
-            "hallo",
-            "danke",
-            "hilfe",
-            "bitte",
-            "brauche",
-            "zahlung",
-            "konto",
-            "großartig",
-            "ausgezeichnet"
+            "hallo", "danke", "hilfe", "bitte",
+            "brauche", "zahlung", "konto",
+            "großartig", "ausgezeichnet"
         ],
 
         "Hindi": [
-            "नमस्ते",
-            "धन्यवाद",
-            "मदद",
-            "समस्या",
-            "सेवा",
-            "चाहिए",
-            "कृपया",
-            "भुगतान",
-            "खाता"
+            "नमस्ते", "धन्यवाद", "मदद", "समस्या",
+            "सेवा", "चाहिए", "कृपया", "भुगतान", "खाता",
+
+            "namaste", "dhanyavaad", "madad",
+            "mujhe", "mera", "meri", "mere",
+            "aap", "apka", "apni", "kya",
+            "hai", "hain", "chahiye",
+            "kripya", "samajh", "samasya",
+            "pareshan", "problem hai",
+            "payment mein", "order ke",
+            "baare mein"
         ],
 
         "Tamil": [
-            "வணக்கம்",
-            "நன்றி",
-            "உதவி",
-            "பிரச்சனை",
-            "சேவை",
-            "வேண்டும்",
-            "தயவு",
-            "பணம்",
-            "கணக்கு"
+            "வணக்கம்", "நன்றி", "உதவி", "பிரச்சனை",
+            "சேவை", "வேண்டும்", "தயவு", "பணம்", "கணக்கு",
+
+            "vanakkam", "nandri", "udavi", "uthavi",
+            "enakku", "ennaku", "enoda", "en",
+            "ungalukku", "ungal", "venum", "vendum",
+            "irukku", "irukkirathu", "problem",
+            "pathi", "order pathi", "help venum",
+            "payment", "panam", "kanakku"
         ],
 
         "Urdu": [
-            "سلام",
-            "شکریہ",
-            "مدد",
-            "مسئلہ",
-            "سروس",
-            "چاہیے",
-            "براہ کرم",
-            "ادائیگی",
-            "اکاؤنٹ"
+            "سلام", "شکریہ", "مدد", "مسئلہ",
+            "سروس", "چاہیے", "براہ کرم",
+            "ادائیگی", "اکاؤنٹ",
+
+            "salam", "shukriya", "madad",
+            "mujhe", "masla", "masla hai",
+            "mushkil", "chahiye",
+            "barah karam", "madad chahiye",
+            "payment", "account"
         ]
     }
 
-    message_lower = message.lower()
+    message_lower = message.lower().strip()
 
-    for language, patterns in language_patterns.items():
-        if any(pattern in message_lower for pattern in patterns):
+    # Only use languages enabled in configuration
+    enabled_patterns = {
+        language: patterns
+        for language, patterns in language_patterns.items()
+        if language in supported_languages
+    }
+
+    # 1. Exact / substring matching
+    for language, patterns in enabled_patterns.items():
+        if any(pattern.lower() in message_lower for pattern in patterns):
             return language
 
+    # 2. Fuzzy matching for common spelling mistakes
+    words = message_lower.split()
+
+    best_language = None
+    best_score = 0
+
+    for language, patterns in enabled_patterns.items():
+
+        for pattern in patterns:
+
+            if " " in pattern:
+                continue
+
+            for word in words:
+
+                if len(word) < 4 or len(pattern) < 4:
+                    continue
+
+                score = SequenceMatcher(
+                    None,
+                    word,
+                    pattern.lower()
+                ).ratio()
+
+                if score >= 0.78 and score > best_score:
+                    best_score = score
+                    best_language = language
+
+    if best_language:
+        return best_language
+
     return "English"
-
-
 def analyze_sentiment(message, conversation_history=None):
     """
     Analyze the customer's current message.
@@ -127,8 +170,46 @@ def analyze_sentiment(message, conversation_history=None):
     combined_text = f"{history_text} {message}".strip()
     text = combined_text.lower()
 
-    language = detect_language(message)
+    language = detect_language(
+    message,
+    supported_languages=[
+        "English",
+        "Spanish",
+        "French",
+        "German",
+        "Hindi",
+        "Tamil",
+        "Urdu"
+    ]
+)
 
+    english_indicators = [
+    "the", "is", "are", "was", "were",
+    "my", "your", "I", "you", "we",
+    "order", "payment", "account", "help",
+    "problem", "please", "need", "want",
+    "where", "when", "what", "how",
+    "can", "could", "would"
+]
+
+    english_match = any(
+    word in message.lower().split()
+    for word in english_indicators
+)
+
+    language_confidence = (
+    1.0 if language != "English" or english_match else 0.5
+)
+
+          # Default sentiment values
+    sentiment = "neutral"
+    confidence = 0.0
+    tone = "professional"
+    frustrated = False
+    urgent = False
+    sarcastic = False
+    risk_level = "low"
+    risk_type = None
     # --------------------------------------------------
     # MULTILINGUAL ANALYSIS
     # --------------------------------------------------
@@ -305,6 +386,7 @@ def analyze_sentiment(message, conversation_history=None):
             sentiment = "neutral"
             confidence = 0.0
 
+
         # --------------------------------------------------
         # MULTILINGUAL FRUSTRATION
         # --------------------------------------------------
@@ -474,17 +556,18 @@ def analyze_sentiment(message, conversation_history=None):
         else:
             tone = "professional"
 
-        return {
-            "sentiment": sentiment,
-            "confidence": confidence,
-            "tone": tone,
-            "frustrated": frustrated,
-            "urgent": urgent,
-            "sarcastic": sarcastic,
-            "risk_level": risk_level,
-            "risk_type": risk_type,
-            "language": language
-        }
+    return {
+    "sentiment": sentiment,
+    "confidence": confidence,
+    "language_confidence": language_confidence,
+    "tone": tone,
+    "frustrated": frustrated,
+    "urgent": urgent,
+    "sarcastic": sarcastic,
+    "risk_level": risk_level,
+    "risk_type": risk_type,
+    "language": language
+}
 
     # --------------------------------------------------
     # ENGLISH SENTIMENT
@@ -682,13 +765,14 @@ def analyze_sentiment(message, conversation_history=None):
         tone = "professional"
 
     return {
-        "sentiment": sentiment,
-        "confidence": confidence,
-        "tone": tone,
-        "frustrated": frustrated,
-        "urgent": urgent,
-        "sarcastic": sarcastic,
-        "risk_level": risk_level,
-        "risk_type": risk_type,
-        "language": language
-    }
+    "sentiment": sentiment,
+    "confidence": confidence,
+    "language_confidence": language_confidence,
+    "tone": tone,
+    "frustrated": frustrated,
+    "urgent": urgent,
+    "sarcastic": sarcastic,
+    "risk_level": risk_level,
+    "risk_type": risk_type,
+    "language": language
+}

@@ -8,9 +8,11 @@ from langchain_helper import (
     create_vector_db,
     answer_question
 )
+
 from sentiment_engine import analyze_sentiment
 from conversation_manager import ConversationManager
 from escalation_engine import evaluate_escalation
+
 from support_ticket_engine import (
     extract_ticket_information,
     find_missing_information,
@@ -21,6 +23,7 @@ from support_ticket_engine import (
     create_masked_handoff,
     handle_sla_escalation
 )
+
 from knowledge_base_pipeline import (
     detect_prompt_injection,
     mask_sensitive_data,
@@ -28,17 +31,35 @@ from knowledge_base_pipeline import (
     run_health_check,
     automatic_rollback
 )
+
 from multimodal_evidence_engine import process_uploaded_file
 
 
 st.title("CUSTOMER SERVICE CHATBOT 🤖")
 
 
-# Create conversation manager
+# Task 6: Customer session management
+if "customer_session_id" not in st.session_state:
+    st.session_state["customer_session_id"] = "customer_default"
+
+customer_session_id = st.text_input(
+    "Customer Session ID",
+    value=st.session_state["customer_session_id"]
+)
+
+st.session_state["customer_session_id"] = (
+    customer_session_id.strip() or "customer_default"
+)
+
 if "conversation_manager" not in st.session_state:
     st.session_state["conversation_manager"] = ConversationManager()
 
 conversation_manager = st.session_state["conversation_manager"]
+
+if conversation_manager.active_session_id != st.session_state["customer_session_id"]:
+    conversation_manager.start_session(
+        st.session_state["customer_session_id"]
+    )
 
 
 # Create Knowledgebase
@@ -67,7 +88,9 @@ if historical_question:
         "Policy date",
         value=datetime.now().date()
     ).isoformat()
-    # Task 5: Multimodal evidence upload
+
+
+# Task 5: Multimodal evidence upload
 st.subheader("Evidence Upload")
 
 uploaded_file = st.file_uploader(
@@ -147,18 +170,57 @@ if uploaded_file is not None:
             st.error(
                 evidence_result["reason"]
             )
+
+
 # Customer question
 with st.form("chat_form"):
     question = st.text_input("Question: ")
+
     waiting_minutes = st.number_input(
         "Simulated waiting time (minutes)",
         min_value=0,
         value=0
     )
+
     send_message = st.form_submit_button("Send")
 
+
+# Task 6: Local ambiguous follow-up detector
+# This keeps main.py working even if the ConversationManager
+# currently does not contain this method.
+def detect_ambiguous_follow_up(message):
+    import re
+
+    ambiguous_patterns = [
+        r"\bthat one\b",
+        r"\bthis one\b",
+        r"\bthe other one\b",
+        r"\bthe previous one\b",
+        r"\bthe earlier one\b",
+        r"\bwhat about that\b",
+        r"\bwhat about this\b",
+        r"\bwhat about it\b",
+        r"\bhow about that\b",
+        r"\bhow about this\b",
+        r"\bwhich one\b"
+    ]
+
+    message_lower = message.lower().strip()
+
+    detected = any(
+        re.search(pattern, message_lower)
+        for pattern in ambiguous_patterns
+    )
+
+    return {
+        "ambiguous_follow_up": detected,
+        "message": message
+    }
+
+
 if send_message and question:
-        # Task 3: Prompt-injection protection
+
+    # Task 3: Prompt-injection protection
     injection_check = detect_prompt_injection(question)
 
     if not injection_check["safe"]:
@@ -166,9 +228,13 @@ if send_message and question:
             "⚠️ Potential prompt injection detected. "
             "This request was blocked for security."
         )
-        st.write(f"Detected patterns: {injection_check['patterns']}")
+
+        st.write(
+            f"Detected patterns: {injection_check['patterns']}"
+        )
+
         st.stop()
-    
+
 
     # 1. Analyze sentiment
     sentiment = analyze_sentiment(
@@ -176,8 +242,46 @@ if send_message and question:
         conversation_manager.get_history()
     )
 
+
+    # Task 6: Request clarification when language confidence is low
+    language_clarification = (
+        conversation_manager.check_clarification_needed(
+            sentiment.get("language_confidence", 0.0)
+        )
+    )
+
+    if language_clarification["clarification_needed"]:
+        st.warning(
+            "I’m not confident I understood your message. "
+            "Could you please rephrase or provide more details?"
+        )
+
+
+    # Task 6: Detect ambiguous follow-up questions
+    ambiguous_follow_up = detect_ambiguous_follow_up(question)
+
+    if ambiguous_follow_up["ambiguous_follow_up"]:
+        st.warning(
+            "I’m not sure what you’re referring to. "
+            "Could you please specify the order, product, or issue?"
+        )
+
+
+    # Task 6: Detect multiple requests
+    multiple_requests = conversation_manager.detect_multiple_requests(
+        question
+    )
+
+    if multiple_requests["multiple_requests"]:
+        st.warning(
+            f"I detected {multiple_requests['request_count']} separate requests. "
+            "I’ll handle them separately."
+        )
+
+
     # 2. Get current hour
     current_hour = datetime.now().hour
+
 
     # Simulated time control for testing
     use_simulated_time = st.checkbox(
@@ -191,20 +295,22 @@ if send_message and question:
             max_value=23,
             value=current_hour
         )
+
         current_hour = simulated_hour
 
-    # 3. Evaluate escalation using previous conversation history
+
+       # 3. Add current message to conversation history
+    conversation_manager.add_message(
+        question,
+        sentiment
+    )
+
+    # 4. Evaluate escalation using updated conversation history
     escalation = evaluate_escalation(
         question,
         sentiment,
         conversation_manager.get_history(),
         current_hour=current_hour
-    )
-
-    # 4. Add current message to conversation history
-    conversation_manager.add_message(
-        question,
-        sentiment
     )
 
     # 5. Display customer sentiment
@@ -217,9 +323,9 @@ if send_message and question:
     st.write(f"Urgent: {sentiment['urgent']}")
     st.write(f"Sarcastic: {sentiment['sarcastic']}")
     st.write(f"Risk Level: {sentiment['risk_level']}")
-
     if sentiment["risk_type"]:
         st.write(f"Risk Type: {sentiment['risk_type']}")
+
 
     # 6. Display escalation information
     st.subheader("Escalation")
@@ -249,6 +355,7 @@ if send_message and question:
         f"{escalation['handling_action']}"
     )
 
+
     # 7. Human escalation warning
     if escalation["escalation_required"]:
         st.warning(
@@ -256,10 +363,48 @@ if send_message and question:
             "Please escalate this customer to a support agent."
         )
 
-                    # 8. Create structured support ticket
+
+    # 8. Create structured support ticket
     masked_ticket_question = mask_sensitive_data(question)
-    ticket = extract_ticket_information(masked_ticket_question)
-    missing_information = find_missing_information(ticket)
+
+    ticket = extract_ticket_information(
+       masked_ticket_question
+    )
+
+# Task 6: Apply corrected order ID
+    correction = conversation_manager.detect_correction(question)
+
+    if correction["correction_detected"]:
+       corrected_order_id = conversation_manager.extract_order_id(question)
+
+       if corrected_order_id:
+          ticket["order_id"] = corrected_order_id
+
+    missing_information = find_missing_information(
+    ticket
+    )
+
+
+    # Task 6: Calculate intent confidence
+    intent_confidence = (
+        1.0 if ticket.get("issue") else 0.0
+    )
+
+
+    # Task 6: Request clarification when intent confidence is low
+    intent_clarification = (
+        conversation_manager.check_clarification_needed(
+            1.0,
+            intent_confidence
+        )
+    )
+
+    if intent_clarification["clarification_needed"]:
+        st.warning(
+            "I’m not confident I understood your request. "
+            "Could you please provide more details?"
+        )
+
 
     priority = calculate_priority(
         sentiment,
@@ -269,14 +414,17 @@ if send_message and question:
         customer_impact="medium"
     )
 
+
     if "ticket_start_time" not in st.session_state:
         st.session_state["ticket_start_time"] = datetime.now()
+
 
     ticket_sla = calculate_sla(
         priority["priority"],
         waiting_minutes=waiting_minutes,
         start_time=st.session_state["ticket_start_time"]
     )
+
 
     # Display support ticket
     st.subheader("Support Ticket")
@@ -288,12 +436,16 @@ if send_message and question:
     st.write(f"Evidence: {ticket['evidence']}")
     st.write(f"Contact: {ticket['contact']}")
 
+
     if missing_information:
         st.warning(
             f"Missing mandatory information: {missing_information}"
         )
     else:
-        st.success("All mandatory ticket information is available.")
+        st.success(
+            "All mandatory ticket information is available."
+        )
+
 
     st.write(
         f"Priority: {priority['priority']}"
@@ -310,6 +462,7 @@ if send_message and question:
     st.write(
         f"SLA Limit: {ticket_sla['sla_limit_minutes']} minutes"
     )
+
 
     # Support agents
     agents = [
@@ -333,6 +486,7 @@ if send_message and question:
         }
     ]
 
+
     # Route ticket
     required_skill = "order"
 
@@ -351,53 +505,62 @@ if send_message and question:
         elif "order" in issue_text:
             required_skill = "order"
 
+
     routing = route_ticket(
-    ticket["issue"],
-    required_skill,
-    agents,
-    current_hour=current_hour,
-    current_day=datetime.now().strftime("%A"),
-    current_date=datetime.now().strftime("%Y-%m-%d")
-)
+        ticket["issue"],
+        required_skill,
+        agents,
+        current_hour=current_hour,
+        current_day=datetime.now().strftime("%A"),
+        current_date=datetime.now().strftime("%Y-%m-%d")
+    )
 
     st.write(f"Routing Status: {routing['status']}")
     st.write(f"Assigned Agent: {routing['assigned_agent']}")
     st.write(f"Routing Reason: {routing['reason']}")
+
+
     # SLA escalation
-    sla_escalation = handle_sla_escalation(ticket_sla)
+    sla_escalation = handle_sla_escalation(
+        ticket_sla
+    )
 
     if sla_escalation["escalation_required"]:
         st.error(
             f"SLA Escalation: {sla_escalation['reason']}"
         )
+
     elif sla_escalation["escalation_level"] == "warning":
         st.warning(
             f"SLA Warning: {sla_escalation['reason']}"
         )
-            # Task 3: Mask sensitive data before LLM processing
+
+
+    # Task 3: Mask sensitive data before LLM processing
     masked_question = mask_sensitive_data(question)
+
 
     # 8. Generate chatbot response
     st.header("Answer")
-    response_start_time = time.time()
-    response_failure_count = 0
-
-    st.header("Answer")
 
     response_start_time = time.time()
     response_failure_count = 0
+
 
     try:
-        response = answer_question(
+
+        response =  answer_question(
             masked_question,
             customer_access_level=customer_access_level,
             target_date=historical_date
         )
 
+
         response_latency_ms = round(
             (time.time() - response_start_time) * 1000,
             2
         )
+
 
         monitoring_metrics = record_monitoring_metrics(
             latency_ms=response_latency_ms,
@@ -408,6 +571,7 @@ if send_message and question:
                 else 0
             )
         )
+
 
         st.subheader("Task 3 Monitoring")
 
@@ -431,8 +595,12 @@ if send_message and question:
             f"{monitoring_metrics['escalation_count']}"
         )
 
+
         if response["grounded"]:
-            st.write(response["answer"])
+
+            st.write(
+                response["answer"]
+            )
 
             st.subheader("Sources")
 
@@ -440,6 +608,7 @@ if send_message and question:
                 st.write(citation)
 
         else:
+
             st.warning(
                 "⚠️ I don't have enough reliable evidence "
                 "to answer this question. "
@@ -447,7 +616,9 @@ if send_message and question:
                 "additional information."
             )
 
+
     except Exception as e:
+
         response_failure_count = 1
 
         error_message = str(e)
@@ -456,6 +627,7 @@ if send_message and question:
             "429" in error_message
             or "RESOURCE_EXHAUSTED" in error_message
         ):
+
             st.warning(
                 "The chatbot's AI response service is "
                 "temporarily unavailable because the API "
@@ -463,10 +635,15 @@ if send_message and question:
                 "The sentiment and escalation analysis "
                 "is still available."
             )
+
         else:
-           st.exception(e)
-       
+
+            st.exception(e)
+
 
     # 9. Conversation summary
     st.subheader("Conversation Summary")
-    st.write(escalation["conversation_summary"])
+
+    st.write(
+        escalation["conversation_summary"]
+    )
