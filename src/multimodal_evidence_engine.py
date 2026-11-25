@@ -147,22 +147,17 @@ def calculate_file_hash(file_bytes):
 
 def extract_order_id(text):
     patterns = [
-        r"(?:order\s*id|order)\s*(?:is|:|#|-)?\s*([A-Za-z0-9-]+)",
-        r"\b(ORD[A-Za-z0-9-]+)\b"
+        r"(?:order\s*(?:id|number|no\.?)|order\s*#|order\s*:)\s*(?:is|:|#|-)?\s*(ORD(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]+)",
+        r"\b(ORD(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]+)\b"
     ]
 
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
 
         if match:
-            value = match.group(1).strip().upper()
+            return match.group(1).strip().upper()
 
-            if not value.startswith("ORD"):
-                value = "ORD" + value
-
-        return value
-
-        return None
+    return None
 def extract_amount(text):
     patterns = [
         r"(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)",

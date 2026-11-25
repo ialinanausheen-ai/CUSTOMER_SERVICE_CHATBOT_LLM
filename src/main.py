@@ -116,60 +116,68 @@ if uploaded_file is not None:
             evidence_message
         )
 
-        if evidence_result["status"] == "processed":
+        st.session_state["evidence_result"] = evidence_result
 
+
+# Display saved evidence result after Streamlit reruns
+evidence_result = st.session_state.get("evidence_result")
+
+if evidence_result:
+
+    if evidence_result["status"] == "processed":
+
+        st.success(
+            evidence_result["reason"]
+        )
+
+        st.write(
+            "Evidence:",
+            evidence_result["evidence"]
+        )
+
+        if evidence_result["comparison"]["match"]:
             st.success(
-                evidence_result["reason"]
+                "Evidence matches the customer's message."
             )
-
-            st.write(
-                "Evidence:",
-                evidence_result["evidence"]
-            )
-
-            if evidence_result["comparison"]["match"]:
-                st.success(
-                    "Evidence matches the customer's message."
-                )
-            else:
-                st.warning(
-                    "Evidence conflicts with the customer's message."
-                )
-
-        elif evidence_result["status"] == "conflict_detected":
-
+        else:
             st.warning(
-                evidence_result["reason"]
+                "Evidence conflicts with the customer's message."
             )
 
-            st.write(
-                "Conflicts:",
-                evidence_result["comparison"]["conflicts"]
-            )
+    elif evidence_result["status"] == "conflict_detected":
 
-        elif evidence_result["status"] == "clarification_required":
+        st.warning(
+            evidence_result["reason"]
+        )
 
-            st.warning(
-                evidence_result["reason"]
-            )
+        st.write(
+            "Conflicts:",
+            evidence_result["comparison"]["conflicts"]
+        )
 
-        elif evidence_result["status"] == "queued":
+    elif evidence_result["status"] == "clarification_required":
 
-            st.info(
-                "Your evidence is taking longer than 30 seconds "
-                "to process and has been moved to the background queue."
-            )
+        st.warning(
+            evidence_result["reason"]
+        )
 
-            st.write(
-                "Job ID:",
-                evidence_result["job"]["job_id"]
-            )
+    elif evidence_result["status"] == "queued":
 
-        elif evidence_result["status"] == "rejected":
+        st.info(
+            "Your evidence is taking longer than 30 seconds "
+            "to process and has been moved to the background queue."
+        )
 
-            st.error(
-                evidence_result["reason"]
-            )
+        st.write(
+            "Job ID:",
+            evidence_result["job"]["job_id"]
+        )
+
+    elif evidence_result["status"] == "rejected":
+
+        st.error(
+            evidence_result["reason"]
+        )
 
 
 # Customer question
@@ -364,32 +372,44 @@ if send_message and question:
         )
 
 
-    # 8. Create structured support ticket
+       # 8. Create structured support ticket
     masked_ticket_question = mask_sensitive_data(question)
 
     ticket = extract_ticket_information(
-       masked_ticket_question
+        masked_ticket_question
     )
 
-# Task 6: Apply corrected order ID
+    evidence_result = st.session_state.get("evidence_result")
+
+    if evidence_result and evidence_result.get("status") == "processed":
+        evidence = evidence_result.get("evidence", {})
+
+        if evidence.get("order_id"):
+            ticket["order_id"] = evidence["order_id"]
+
+        if evidence.get("product"):
+            ticket["product"] = evidence["product"]
+
+        if evidence.get("amount"):
+            ticket["evidence"] = f"Amount: {evidence['amount']}"
+
+    # Task 6: Apply corrected order ID
     correction = conversation_manager.detect_correction(question)
 
     if correction["correction_detected"]:
-       corrected_order_id = conversation_manager.extract_order_id(question)
+        corrected_order_id = conversation_manager.extract_order_id(question)
 
-       if corrected_order_id:
-          ticket["order_id"] = corrected_order_id
+        if corrected_order_id:
+            ticket["order_id"] = corrected_order_id
 
     missing_information = find_missing_information(
-    ticket
+        ticket
     )
-
 
     # Task 6: Calculate intent confidence
     intent_confidence = (
         1.0 if ticket.get("issue") else 0.0
     )
-
 
     # Task 6: Request clarification when intent confidence is low
     intent_clarification = (
@@ -404,7 +424,6 @@ if send_message and question:
             "I’m not confident I understood your request. "
             "Could you please provide more details?"
         )
-
 
     priority = calculate_priority(
         sentiment,
@@ -549,11 +568,35 @@ if send_message and question:
 
     try:
 
-        response =  answer_question(
-            masked_question,
-            customer_access_level=customer_access_level,
-            target_date=historical_date
-        )
+        evidence_result = st.session_state.get("evidence_result")
+
+        rag_question = masked_question
+
+        if evidence_result and evidence_result.get("status") == "processed":
+            evidence = evidence_result.get("evidence", {})
+
+            evidence_context = (
+          f"\n\nVerified evidence from uploaded file:\n"
+          f"Order ID: {evidence.get('order_id')}\n"
+          f"Product: {evidence.get('product')}\n"
+          f"Amount: {evidence.get('amount')}\n"
+          f"Date: {evidence.get('date')}\n"
+          f"Error Code: {evidence.get('error_code')}\n"
+            )
+
+            rag_question = masked_question + evidence_context
+        evidence_result = st.session_state.get("evidence_result")
+        response = answer_question(
+    rag_question,
+    customer_access_level=customer_access_level,
+    target_date=historical_date,
+    evidence_context=(
+        evidence_context
+        if evidence_result
+        and evidence_result.get("status") == "processed"
+        else None
+    )
+)
 
 
         response_latency_ms = round(
@@ -595,7 +638,7 @@ if send_message and question:
             f"{monitoring_metrics['escalation_count']}"
         )
 
-
+        
         if response["grounded"]:
 
             st.write(

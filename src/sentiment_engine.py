@@ -556,19 +556,6 @@ def analyze_sentiment(message, conversation_history=None):
         else:
             tone = "professional"
 
-    return {
-    "sentiment": sentiment,
-    "confidence": confidence,
-    "language_confidence": language_confidence,
-    "tone": tone,
-    "frustrated": frustrated,
-    "urgent": urgent,
-    "sarcastic": sarcastic,
-    "risk_level": risk_level,
-    "risk_type": risk_type,
-    "language": language
-}
-
     # --------------------------------------------------
     # ENGLISH SENTIMENT
     # --------------------------------------------------
