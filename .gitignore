@@ -1,7 +1,6 @@
 .env
 __pycache__/
 *.pyc
-faiss_index/
 .venv/
 venv/
 evidence_storage/
