@@ -234,31 +234,52 @@ def answer_question(
         target_date=target_date
     )
 
-    response = chain.invoke(
-    {
-        "query": question
-    }
-)
+    try:
+        response = chain.invoke(
+            {
+                "query": question
+            }
+        )
+
+    except Exception as e:
+        error_message = str(e)
+
+        if "503" in error_message or "UNAVAILABLE" in error_message:
+            return {
+                "answer": (
+                    "I'm temporarily unable to generate a response "
+                    "because the AI service is currently experiencing "
+                    "high demand. Please try again in a few minutes."
+                ),
+                "citations": [],
+                "grounded": False,
+                "reason": "AI service temporarily unavailable.",
+                "source_documents": [],
+                "unsupported_sentences": []
+            }
+
+        raise
 
     source_documents = response.get(
         "source_documents",
         []
     )
+
     if evidence_context:
-      source_documents.append(
-        Document(
-            page_content=evidence_context,
-            metadata={
-                "source": "Verified uploaded evidence",
-                "product": "Evidence",
-                "region": "IN",
-                "access_level": customer_access_level,
-                "version": 1,
-                "effective": "2000-01-01",
-                "expiry": None
-            }
+        source_documents.append(
+            Document(
+                page_content=evidence_context,
+                metadata={
+                    "source": "Verified uploaded evidence",
+                    "product": "Evidence",
+                    "region": "IN",
+                    "access_level": customer_access_level,
+                    "version": 1,
+                    "effective": "2000-01-01",
+                    "expiry": None
+                }
+            )
         )
-    )
 
     grounded_response = build_grounded_response(
         response.get("result", ""),
@@ -276,18 +297,3 @@ def answer_question(
             []
         )
     }
-
-
-if __name__ == "__main__":
-    create_vector_db()
-
-    result = answer_question(
-        "What kind of skills will I learn in this course?"
-    )
-
-    print("\nCHATBOT RESPONSE:")
-    print(result["answer"])
-
-    print("\nSOURCES:")
-    for citation in result["citations"]:
-        print(citation)
